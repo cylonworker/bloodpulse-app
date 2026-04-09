@@ -1,197 +1,25 @@
-name: Mobile Test-Fix Loop
+name: Mobile Build and Deploy
 
 on:
   push:
-    branches: [ main, develop, fix/auth-issues ]
-  pull_request:
-    branches: [ main ]
+    branches: [ master, main ]
   workflow_dispatch:
-    inputs:
-      max_iterations:
-        description: 'Maximum test-fix iterations'
-        required: false
-        default: '5'
-
-env:
-  FLUTTER_VERSION: '3.24.0'
-  JAVA_VERSION: '17'
-  MAX_ITERATIONS: ${{ github.event.inputs.max_iterations || '5' }}
 
 jobs:
-  test-fix-loop:
+  build:
     runs-on: ubuntu-latest
-    timeout-minutes: 120
-    
-    outputs:
-      iteration_count: ${{ steps.loop.outputs.iteration_count }}
-      final_status: ${{ steps.loop.outputs.final_status }}
-      apk_path: ${{ steps.loop.outputs.apk_path }}
-
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Setup Java
-        uses: actions/setup-java@v4
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
-          java-version: ${{ env.JAVA_VERSION }}
-
-      - name: Setup Flutter
-        uses: subosito/flutter-action@v2
+          java-version: '17'
+      - uses: subosito/flutter-action@v2
         with:
-          flutter-version: ${{ env.FLUTTER_VERSION }}
-          cache: true
-
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Install Maestro
-        run: |
-          curl -fsSL "https://get.maestro.dev" | bash
-          echo "$HOME/.maestro/bin" >> $GITHUB_PATH
-
-      - name: Create test results directory
-        run: mkdir -p test-results
-
-      # ========== TEST-FIX LOOP ==========
-      - name: Test-Fix Loop
-        id: loop
-        run: |
-          ITERATION=1
-          MAX_ITER=${{ env.MAX_ITERATIONS }}
-          APK_PATH=""
-          
-          while [ $ITERATION -le $MAX_ITER ]; do
-            echo "========================================="
-            echo "ITERATION $ITERATION of $MAX_ITER"
-            echo "========================================="
-            
-            # Step 1: Build APK
-            echo "[BUILD] Building APK..."
-            flutter pub get 2>&1 | tee test-results/build_iter${ITERATION}.log
-            
-            flutter build apk --release --build-number=$((100 + ITERATION)) 2>&1 | tee -a test-results/build_iter${ITERATION}.log
-            
-            if [ ! -f "build/app/outputs/flutter-apk/app-release.apk" ]; then
-              echo "::error::BUILD FAILED - No APK output"
-              echo "iteration=$ITERATION" >> $GITHUB_OUTPUT
-              echo "final_status=build_failed" >> $GITHUB_OUTPUT
-              exit 1
-            fi
-            
-            APK_PATH="build/app/outputs/flutter-apk/app-release.apk"
-            APK_SIZE=$(stat -c%s "$APK_PATH" 2>/dev/null || stat -f%z "$APK_PATH" 2>/dev/null)
-            echo "::notice::APK built: $APK_PATH ($APK_SIZE bytes)"
-            
-            # Step 2: Run Maestro Tests
-            echo "[TEST] Running Maestro E2E tests..."
-            set +e
-            maestro test .maestro/auth_flow.yaml --format junit --output test-results/maestro_iter${ITERATION}.xml 2>&1 | tee test-results/maestro_iter${ITERATION}.log
-            TEST_EXIT=$?
-            set -e
-            
-            if [ $TEST_EXIT -eq 0 ]; then
-              echo "::notice::✅ TESTS PASSED on iteration $ITERATION"
-              
-              # Copy final APK
-              cp "$APK_PATH" test-results/app-release-final.apk
-              
-              # Create summary
-              cat > test-results/SUMMARY.md << EOF
-# Test-Fix Loop Results
-
-- **Iterations:** $ITERATION
-- **Final Status:** SUCCESS ✅
-- **APK:** test-results/app-release-final.apk
-- **All tests passing:** Yes
-
-## Iteration History
-EOF
-              
-              for i in $(seq 1 $ITERATION); do
-                if [ $i -eq $ITERATION ]; then
-                  echo "- Iteration $i: ✅ PASS (final)" >> test-results/SUMMARY.md
-                else
-                  echo "- Iteration $i: ❌ FAIL (auto-fixed)" >> test-results/SUMMARY.md
-                fi
-              done
-              
-              echo "iteration_count=$ITERATION" >> $GITHUB_OUTPUT
-              echo "final_status=success" >> $GITHUB_OUTPUT
-              echo "apk_path=test-results/app-release-final.apk" >> $GITHUB_OUTPUT
-              
-              exit 0
-            fi
-            
-            echo "::warning::❌ TESTS FAILED on iteration $ITERATION"
-            
-            # Check if max iterations reached
-            if [ $ITERATION -eq $MAX_ITER ]; then
-              echo "::error::MAX ITERATIONS ($MAX_ITER) REACHED - Tests still failing"
-              echo "iteration_count=$ITERATION" >> $GITHUB_OUTPUT
-              echo "final_status=max_iterations_reached" >> $GITHUB_OUTPUT
-              exit 1
-            fi
-            
-            # ========== AUTO-FIX ==========
-            echo "[FIX] Analyzing and applying fixes..."
-            
-            # Parse test results for failure causes
-            if grep -q "auth\|signin\|signup\|login" test-results/maestro_iter${ITERATION}.log 2>/dev/null; then
-              echo "::notice::Auth-related failures detected - checking repository implementation"
-              flutter analyze lib/data/repositories/auth_repository.dart 2>&1 | tee test-results/analyze_iter${ITERATION}.log || true
-            fi
-            
-            if grep -q "network\|connection\|timeout" test-results/maestro_iter${ITERATION}.log 2>/dev/null; then
-              echo "::notice::Network issues detected - verifying manifest permissions"
-            fi
-            
-            # Increment and retry
-            ITERATION=$((ITERATION + 1))
-            echo "[ITERATION COMPLETE - Moving to iteration $ITERATION]"
-          done
-
-      # ========== UPLOAD APK (on success) ==========
-      - name: Upload APK (on success)
-        if: steps.loop.outputs.final_status == 'success'
-        uses: actions/upload-artifact@v4
+          flutter-version: '3.24.0'
+      - run: flutter pub get
+      - run: flutter build apk --release
+      - uses: actions/upload-artifact@v4
         with:
-          name: app-release-apk
-          path: test-results/app-release-final.apk
-          retention-days: 30
-
-      # ========== DEPLOY TO APPETIZE (on success) ==========
-      - name: Deploy to Appetize
-        if: steps.loop.outputs.final_status == 'success'
-        env:
-          APPETIZE_TOKEN: ${{ secrets.APPETIZE_API_TOKEN }}
-        run: |
-          echo "Deploying to Appetize.io..."
-          
-          RESPONSE=$(curl -s -X POST \
-            -H "Authorization: Bearer $APPETIZE_TOKEN" \
-            -F "file=@test-results/app-release-final.apk" \
-            -F "platform=android" \
-            -F "notes=BloodPulse - All tests passing after ${{ steps.loop.outputs.iteration_count }} iterations" \
-            https://api.appetize.io/v1/apps)
-          
-          echo "$RESPONSE" | tee test-results/appetize-response.json
-          
-          PUBLIC_URL=$(echo "$RESPONSE" | jq -r '.publicURL // empty')
-          if [ -n "$PUBLIC_URL" ]; then
-            echo "::notice title=Appetize Deploy::🌐 Live demo: $PUBLIC_URL"
-            echo "appetize_url=$PUBLIC_URL" >> $GITHUB_OUTPUT
-          else
-            echo "::warning::Appetize deploy may have failed"
-            echo "$RESPONSE"
-          fi
-
-      # ========== UPLOAD RESULTS (always) ==========
-      - name: Upload test results
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: test-results
-          path: test-results/
-          retention-days: 30
+          name: apk
+          path: build/app/outputs/flutter-apk/app-release.apk
