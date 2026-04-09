@@ -16,6 +16,16 @@ env:
   FLUTTER_VERSION: '3.24.0'
   JAVA_VERSION: '17'
   MAX_ITERATIONS: ${{ github.event.inputs.max_iterations || '5' }}
+    inputs:
+      max_iterations:
+        description: 'Maximum test-fix iterations'
+        required: false
+        default: '5'
+
+env:
+  FLUTTER_VERSION: '3.24.0'
+  JAVA_VERSION: '17'
+  MAX_ITERATIONS: ${{ github.event.inputs.max_iterations || '5' }}
 
 jobs:
   test-fix-loop:
@@ -245,6 +255,33 @@ jobs:
           name: app-release-apk
           path: build/app/outputs/flutter-apk/app-release.apk
           retention-days: 30
+
+      - name: Deploy to Appetize (on success)
+        if: steps.loop.outputs.final_status == 'success'
+        env:
+          APPETIZE_TOKEN: ${{ secrets.APPETIZE_API_TOKEN }}
+        run: |
+          APK_PATH="build/app/outputs/flutter-apk/app-release.apk"
+          echo "Deploying to Appetize.io..."
+          
+          RESPONSE=$(curl -s -X POST \
+            -H "Authorization: Bearer $APPETIZE_TOKEN" \
+            -F "file=@$APK_PATH" \
+            -F "platform=android" \
+            -F "notes=BloodPulse - All tests passing after ${{ steps.loop.outputs.iteration_count }} iterations" \
+            https://api.appetize.io/v1/apps)
+          
+          echo "$RESPONSE" | tee test-results/appetize-response.json
+          
+          PUBLIC_URL=$(echo "$RESPONSE" | jq -r '.publicURL // empty')
+          if [ -n "$PUBLIC_URL" ]; then
+            echo "✅ Appetize URL: $PUBLIC_URL"
+            echo "appetize_url=$PUBLIC_URL" >> $GITHUB_OUTPUT
+            echo "::notice title=Appetize Deploy::🌐 Live demo: $PUBLIC_URL"
+          else
+            echo "⚠️ Appetize deploy may have failed"
+            echo "$RESPONSE"
+          fi
 
       - name: Comment PR with results
         if: github.event_name == 'pull_request' && always()
