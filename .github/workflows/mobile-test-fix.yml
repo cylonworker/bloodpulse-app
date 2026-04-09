@@ -23,3 +23,20 @@ jobs:
         with:
           name: apk
           path: build/app/outputs/flutter-apk/app-release.apk
+
+      - name: Deploy to Appetize
+        env:
+          APPETIZE_TOKEN: ${{ secrets.APPETIZE_API_TOKEN }}
+        run: |
+          curl -s -X POST \
+            -H "Authorization: Bearer $APPETIZE_TOKEN" \
+            -F "file=@build/app/outputs/flutter-apk/app-release.apk" \
+            -F "platform=android" \
+            -F "notes=BloodPulse - Build ${{ github.run_number }}" \
+            https://api.appetize.io/v1/apps | tee appetize-response.json
+          
+          PUBLIC_URL=$(jq -r '.publicURL // empty' appetize-response.json)
+          if [ -n "$PUBLIC_URL" ]; then
+            echo "::notice::🌐 Live demo: $PUBLIC_URL"
+            echo "appetize_url=$PUBLIC_URL" >> $GITHUB_OUTPUT
+          fi
