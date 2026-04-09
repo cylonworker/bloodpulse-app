@@ -1,0 +1,195 @@
+# BloodPulse Auth E2E Tests
+# Run with: maestro test auth_flow.yaml
+
+appId: com.bloodpulse.bloodpulse
+---
+
+# Test 1: Create New Account
+- launchApp:
+    clearState: true
+    stopApp: true
+
+- assertVisible: "BloodPulse"
+- assertVisible: "Track your blood pressure"
+
+# Tap Sign Up toggle
+- tapOn: "Sign Up"
+
+# Fill registration form
+- tapOn: "Name"
+- inputText: "Test User"
+
+- tapOn: "Email"
+- inputText: "testuser_e2e_${Date.now() / 1000}@test.com"
+
+- tapOn: "Password"
+- inputText: "TestPassword123!"
+
+# Submit form
+- tapOn: "Create Account"
+
+# Wait for auth to complete and check we're on home page
+- waitForAnimationToEnd
+
+# Verify we're authenticated (should see bottom nav)
+- assertVisible: "Home"
+- assertVisible: "History"
+- assertVisible: "Reports"
+- assertVisible: "Settings"
+
+# Take screenshot for verification
+- takeScreenshot: e2e_signup_success
+
+# Sign out for next test
+- tapOn: "Settings"
+- scrollUntilVisible:
+    element: "Sign Out"
+    direction: DOWN
+- tapOn: "Sign Out"
+
+# Verify back at login
+- assertVisible: "BloodPulse"
+
+---
+
+# Test 2: Sign In with Existing Account
+- launchApp:
+    clearState: false
+
+# Ensure we're on sign in (not sign up)
+- tapOn: "Sign In"
+
+# Use credentials from signup or known test account
+- tapOn: "Email"
+- inputText: "testuser_existing@test.com"
+
+- tapOn: "Password"
+- inputText: "TestPassword123!"
+
+- tapOn: "Sign In"
+
+- waitForAnimationToEnd
+
+# Verify authenticated
+- assertVisible: "Home"
+
+- takeScreenshot: e2e_signin_success
+
+# Sign out
+- tapOn: "Settings"
+- scrollUntilVisible:
+    element: "Sign Out"
+    direction: DOWN
+- tapOn: "Sign Out"
+
+---
+
+# Test 3: Sign In with Wrong Password (Error Message Test)
+- launchApp:
+    clearState: false
+
+- tapOn: "Email"
+- inputText: "testuser_existing@test.com"
+
+- tapOn: "Password"
+- inputText: "WrongPassword123!"
+
+- tapOn: "Sign In"
+
+# Wait for error
+- waitForAnimationToEnd
+- waitFor: 2 seconds
+
+# Verify error message appears
+- assertVisible: "Invalid email or password"
+
+- takeScreenshot: e2e_error_message
+
+---
+
+# Test 4: Sign Up with Existing User (Duplicate Account Test)
+- launchApp:
+    clearState: false
+
+# Switch to sign up
+- tapOn: "Sign Up"
+
+- tapOn: "Name"
+- inputText: "Duplicate User"
+
+- tapOn: "Email"
+- inputText: "testuser_existing@test.com"
+
+- tapOn: "Password"
+- inputText: "SomePassword123!"
+
+- tapOn: "Create Account"
+
+- waitForAnimationToEnd
+- waitFor: 2 seconds
+
+# Should show "user already exists" error
+- assertVisible: "already exists"
+
+- takeScreenshot: e2e_user_exists_error
+
+---
+
+# Test 5: Weak Password Test
+- launchApp:
+    clearState: false
+
+- tapOn: "Name"
+- inputText: "Weak Pass User"
+
+- tapOn: "Email"
+- inputText: "weakpass_${Date.now() / 1000}@test.com"
+
+- tapOn: "Password"
+- inputText: "123"
+
+- tapOn: "Create Account"
+
+- waitForAnimationToEnd
+- waitFor: 2 seconds
+
+# Should show weak password error
+- assertVisible: "weak"
+
+- takeScreenshot: e2e_weak_password_error
+
+---
+
+# Test 6: Session Persistence (App Restart)
+# First, sign in
+- launchApp:
+    clearState: true
+
+- tapOn: "Sign In"
+
+- tapOn: "Email"
+- inputText: "testuser_existing@test.com"
+
+- tapOn: "Password"
+- inputText: "TestPassword123!"
+
+- tapOn: "Sign In"
+
+- waitForAnimationToEnd
+- assertVisible: "Home"
+
+# Kill and restart app
+- stopApp
+- launchApp:
+    clearState: false
+
+# Should still be authenticated (session persisted)
+- assertVisible: "Home"
+- assertVisible: "History"
+
+- takeScreenshot: e2e_session_persisted
+
+---
+
+# All tests complete
+- stopApp
