@@ -1,0 +1,84 @@
+name: Mobile Build and Deploy (Debug)
+
+on:
+  push:
+    branches: [ master, main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Debug - List project files
+        run: |
+          echo "=== Project Structure ==="
+          find . -name "*.gradle" -o -name "*.gradle.kts" -o -name "settings.gradle*" | head -20
+          echo ""
+          echo "=== Android Directory ==="
+          ls -la android/
+          echo ""
+          echo "=== Android App Directory ==="
+          ls -la android/app/ || echo "No android/app/"
+          echo ""
+          echo "=== settings.gradle content ==="
+          cat android/settings.gradle 2>/dev/null || cat android/settings.gradle.kts 2>/dev/null || echo "No settings.gradle found"
+          echo ""
+          echo "=== build.gradle content ==="
+          cat android/build.gradle 2>/dev/null || cat android/build.gradle.kts 2>/dev/null || echo "No build.gradle found"
+          echo ""
+          echo "=== gradle-wrapper.properties ==="
+          cat android/gradle/wrapper/gradle-wrapper.properties
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Clear Gradle Cache
+        run: rm -rf ~/.gradle/caches/build-cache-1 ~/.gradle/caches/transforms-3
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.24.0'
+
+      - name: Debug - Check Flutter
+        run: |
+          flutter doctor -v
+          flutter --version
+
+      - name: Get dependencies
+        run: flutter pub get
+
+      - name: Debug - List android files before build
+        run: |
+          echo "=== Pre-build android directory ==="
+          ls -la android/
+          ls -la android/app/
+          echo "=== gradle wrapper ==="
+          cat android/gradle/wrapper/gradle-wrapper.properties
+
+      - name: Build APK (verbose)
+        run: flutter build apk --release --verbose
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: apk
+          path: build/app/outputs/flutter-apk/app-release.apk
+
+      - name: Deploy to Appetize
+        env:
+          APPETIZE_TOKEN: ${{ secrets.APPETIZE_API_TOKEN }}
+        run: |
+          curl -s -X POST \
+            -H "Authorization: Bearer $APPETIZE_TOKEN" \
+            -F "file=@build/app/outputs/flutter-apk/app-release.apk" \
+            -F "platform=android" \
+            -F "notes=BloodPulse Debug Build - Flutter 3.24.0 + Gradle 8.0" \
+            https://api.appetize.io/v1/apps | tee appetize-response.json
+          
+          PUBLIC_URL=$(jq -r '.publicURL // empty' appetize-response.json)
+          if [ -n "$PUBLIC_URL" ]; then
+            echo "::notice::🌐 Live demo: $PUBLIC_URL"
+          fi
